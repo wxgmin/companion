@@ -1,0 +1,12 @@
+{
+  "name": "airi-config",
+  "private": true,
+  "type": "module",
+  "description": "Writes AIRI's Local Storage settings so it points at the local companion stack.",
+  "scripts": {
+    "configure": "node configure_airi.mjs"
+  },
+  "dependencies": {
+    "classic-level": "^2.0.0"
+  }
+}
