@@ -22,6 +22,14 @@ data/_matrix/
 *.flac
 !data/**/README.md
 
+# Screenshots of this machine. data/ is only partially ignored above, so these
+# slipped into a commit once: they capture the whole desktop, including whatever
+# happened to be on screen. Never publish them.
+data/*.png
+data/*.jpg
+data/*.jpeg
+!data/**/README.md
+
 # ---- third-party projects: cloned by the user, never vendored ----
 # Each has its own upstream and its own .git. setup.ps1 clones what it needs.
 GPT-SoVITS/
@@ -51,6 +59,15 @@ env/
 __pycache__/
 *.py[cod]
 *.egg-info/
+
+# Vendored dependencies. tools/*/ installs its own on first run; committing them
+# added ~350 files of C++ sources and prebuilt binaries to a repo that does not
+# need to carry them.
+node_modules/
+
+# ---- per-machine state ----
+# Marks that one-off setup already ran here, so it must not travel with a clone.
+.configured
 
 # ---- build and cache ----
 build/
