@@ -1,0 +1,15 @@
+# Orchestrator runtime.
+#
+# Deliberately no torch here: speech-to-text runs through CTranslate2 and the
+# TTS is a separate HTTP service, so this environment stays small and CPU-only.
+# Installing torch here is what causes the CPU-wheel trap (see docs/GOTCHAS.md).
+fastapi>=0.115
+uvicorn[standard]>=0.30
+faster-whisper>=1.1
+sounddevice>=0.4.6
+soundfile>=0.12
+numpy>=1.26,<3
+httpx>=0.27
+websockets>=12
+webrtcvad-wheels>=2.0.14
+python-multipart>=0.0.9

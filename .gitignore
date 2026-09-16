@@ -1,0 +1,71 @@
+# ---- private data: NEVER commit ----
+# Her voice, her chats, and anything derived from them stay on your machine.
+data/voice/*
+!data/voice/README.md
+!data/voice/.gitkeep
+
+data/persona/*
+!data/persona/README.md
+!data/persona/.gitkeep
+
+data/sessions/
+data/corpus/
+data/whatsapp/
+data/instagram/
+data/_work/
+data/_matrix/
+*.wav
+*.mp3
+*.m4a
+*.mp4
+*.opus
+*.flac
+!data/**/README.md
+
+# ---- third-party projects: cloned by the user, never vendored ----
+# Each has its own upstream and its own .git. setup.ps1 clones what it needs.
+GPT-SoVITS/
+Open-LLM-VTuber/
+WeClone/
+avatar-web/
+qwen3-tts/
+hermes-mcp/
+
+# ---- local scratch ----
+setup-logs/
+logs/
+AIRI_CONFIG.md
+Modelfile.hermes*
+
+# ---- secrets ----
+.env
+.env.*
+*.key
+auth.json
+credentials.json
+
+# ---- environments ----
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ---- build and cache ----
+build/
+dist/
+.cache/
+*.log
+logs/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ---- editors and OS ----
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
