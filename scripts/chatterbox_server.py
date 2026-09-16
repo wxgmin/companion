@@ -294,15 +294,35 @@ def build_app(args) -> FastAPI:
         if data.size == 0:
             raise HTTPException(status_code=400, detail="decoded to zero samples")
 
-        # vad_filter drops non-speech. Without it whisper invents fluent text
-        # from silence and background noise, which reads as "worked" while
-        # returning something the user never said.
+        # Normalise before transcribing. A headset mic typically lands around
+        # 0.01-0.05 peak, and both the VAD and whisper's own no-speech check
+        # treat that as room tone - returning an empty string that the UI reports
+        # as "failed to transcribe" even though the words were perfectly clear.
+        # Measured on this machine: rms 0.005-0.03 gave '' or a single word,
+        # rms 0.04-0.05 transcribed correctly. Scaling to a consistent level
+        # makes the result depend on the words rather than on mic gain.
+        peak = float(np.max(np.abs(data)))
+        if peak > 1e-6:
+            data = data * (0.95 / peak)
+        rms = float(np.sqrt(np.mean(data ** 2)))
+
+        # thresholds are deliberately looser than the defaults (0.5 / 0.6):
+        # quiet speech was being classified as silence and dropped entirely.
         try:
             segments, _info = asr.transcribe(
                 data,
                 language=language or None,
                 beam_size=1,
                 vad_filter=True,
+                vad_parameters={
+                    "threshold": 0.25,
+                    "min_speech_duration_ms": 150,
+                    "min_silence_duration_ms": 300,
+                    "speech_pad_ms": 200,
+                },
+                no_speech_threshold=0.8,
+                log_prob_threshold=-1.5,
+                condition_on_previous_text=False,
             )
             text = " ".join(s.text.strip() for s in segments).strip()
         except Exception as exc:  # noqa: BLE001
@@ -315,7 +335,7 @@ def build_app(args) -> FastAPI:
         print(
             f"  -> text={text!r} "
             f"(file={file.filename!r} bytes={len(raw)} "
-            f"rms={float(np.sqrt(np.mean(data ** 2))):.5f})",
+            f"peak_before={peak:.5f} rms_after={rms:.5f})",
             flush=True,
         )
 
