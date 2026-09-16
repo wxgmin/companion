@@ -164,20 +164,33 @@ Numbers from a 24 GB card with the persona model resident at 64K context:
 | Desktop / display | ~1,300 MiB |
 | Chatterbox | 3,730 MiB |
 | 27B at 64K context | ~17,000 MiB |
-| **Total** | **~22,100 MiB of 24,576** |
+| Speech-to-text (`int8_float16`) | 1,199 MiB |
+| **Total** | **~23,200 MiB of 24,576** |
 
-Speech-to-text runs on the **CPU** on purpose. It costs zero VRAM, loads in
-2.3s, and transcribes a 3-second clip in 0.18s - the freed 1.5 GB is worth far
-more to the language model than the microseconds are to STT.
+The pass condition is **100% of the model's layers on the GPU**, not a
+particular number of free MiB. Free VRAM moves by gigabytes while the desktop
+is in use - browsers, Parsec and the Windows shell all hold allocations - so
+treating it as pass/fail produces failures that say nothing about the stack.
+`preflight.py` and `verify_stack.py` both check `size_vram == size` from
+Ollama instead, which is the only reliable signal that nothing spilled to the
+CPU.
+
+The VRAM figures above are why speech-to-text uses `int8_float16` rather than
+`float16`: 1,199 MiB against 2,240 MiB. There is room for one, not both.
+Re-measure with `orchestrator\measure_stack.py` before changing it.
+
+Speech-to-text on the GPU rather than the CPU is worth 13x - 0.29s against
+3.6s on a 6.5 second clip - and that difference is most of what makes the
+conversation feel immediate.
 
 Latency, warm:
 
 | Stage | Time |
 |---|---|
-| Speech to text | ~0.2s |
-| Language model | ~2.9s (44 tok/s) |
+| Speech to text | ~0.3s |
+| Language model | ~0.8s |
 | First audio | ~1.8s after the reply starts |
-| Full round trip | ~4-5s |
+| Full round trip | ~2.9-5s, depending on reply length |
 
 `start.py` runs a preflight before anything starts, because the failure mode
 here is quiet rather than loud: if context overflows VRAM, Ollama spills layers
@@ -198,7 +211,8 @@ likely to touch:
 | `PERSONA_THINK` | `0` | Keep 0 - thinking triples time-to-first-token |
 | `KEEP_ALIVE` | `10m` | **Never `-1`** - it pins ~16 GB forever |
 | `TTS_EXAGGERATION` | `0.8` | Higher is more emotional, less stable |
-| `WHISPER_DEVICE` | `cpu` | `cuda` works but costs ~1.5 GB |
+| `WHISPER_DEVICE` | `cuda` | Falls back to CPU automatically if it cannot load |
+| `WHISPER_COMPUTE` | `int8_float16` | `float16` needs 2,240 MiB and will not fit |
 | `COMPANION_PERSONA_PROMPT` | built-in | Override to write your own character |
 
 ### Retuning for a smaller GPU

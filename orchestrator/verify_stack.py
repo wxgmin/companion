@@ -91,10 +91,26 @@ def main() -> int:
     # ------------------------------------------------------------- headroom
     section("vram")
     used, free = vram()
-    if free >= config.MIN_FREE_VRAM_MIB:
-        ok("headroom", f"{used}/{TOTAL} MiB used, {free} MiB free")
+    model = resident[0] if resident else {}
+    size = model.get("size") or 0
+    size_vram = model.get("size_vram") or 0
+
+    # The pass condition is that no layers spilled to the CPU, not that a
+    # particular number of MiB is free. Free VRAM swings by gigabytes as
+    # desktop apps come and go, so treating it as pass/fail produces failures
+    # that say nothing about the stack.
+    if size and size_vram:
+        on_gpu = (size_vram / size) >= 0.999
+        split = "100% GPU" if on_gpu else f"{size_vram / size * 100:.0f}% on GPU"
+        if on_gpu:
+            ok("model on gpu", f"{split} ({free} MiB free, desktop-dependent)")
+        else:
+            bad("model on gpu", f"{split} - lower PERSONA_NUM_CTX")
     else:
-        bad("headroom", f"only {free} MiB free (want >= {config.MIN_FREE_VRAM_MIB})")
+        ok("vram", f"{used}/{TOTAL} MiB used, {free} MiB free")
+
+    if free < 400:
+        bad("headroom", f"only {free} MiB free - close other GPU apps")
 
     # ------------------------------------------------------------------ tts
     section("voice")

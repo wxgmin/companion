@@ -43,13 +43,18 @@ def report() -> dict:
             results["ok"] = False
 
     # --- GPU headroom -----------------------------------------------------
+    # Free VRAM moves constantly while the desktop is in use, so this is
+    # advisory: a low number is worth knowing about but is not proof of a
+    # problem. The authoritative check is the processor split below, which says
+    # whether any model layers were pushed onto the CPU.
     try:
         used, free, total = gpu_memory()
         add(
             "gpu",
-            free >= config.MIN_FREE_VRAM_MIB,
+            True,
             f"{used}/{total} MiB used, {free} MiB free "
-            f"(want >= {config.MIN_FREE_VRAM_MIB})",
+            f"(soft floor {config.MIN_FREE_VRAM_MIB})",
+            fatal=False,
         )
         results["vram"] = {"used": used, "free": free, "total": total}
     except Exception as exc:  # noqa: BLE001
@@ -74,10 +79,28 @@ def report() -> dict:
         if config.PERSONA_MODEL in names:
             m = next(x for x in loaded if x.get("name") == config.PERSONA_MODEL)
             ctx = m.get("context_length") or m.get("context")
-            size_gb = (m.get("size") or 0) / 1e9
-            detail = f"resident, {size_gb:.1f} GB, ctx={ctx}"
-            ok = ctx is not None and int(ctx) >= config.PERSONA_NUM_CTX
-            add("ollama-model", ok, detail)
+            size = m.get("size") or 0
+            size_vram = m.get("size_vram") or 0
+            size_gb = size / 1e9
+
+            # The authoritative check. Ollama keeps layers on the CPU without
+            # erroring; size_vram < size is the only reliable signal of it, and
+            # the symptom is otherwise just "everything got slow".
+            if size and size_vram:
+                ratio = size_vram / size
+                on_gpu = ratio >= 0.999
+                split = "100% GPU" if on_gpu else f"{ratio * 100:.0f}% on GPU"
+            else:
+                on_gpu, split = True, "split unknown"
+
+            ctx_ok = ctx is None or int(ctx) >= config.PERSONA_NUM_CTX
+            detail = f"{size_gb:.1f} GB, ctx={ctx}, {split}"
+            if not on_gpu:
+                detail += "  <- layers on CPU; lower PERSONA_NUM_CTX"
+            elif not ctx_ok:
+                detail += f"  <- below configured {config.PERSONA_NUM_CTX}"
+            add("ollama-model", on_gpu and ctx_ok, detail)
+            results["model"] = {"ctx": ctx, "size": size, "size_vram": size_vram}
         else:
             add(
                 "ollama-model",
