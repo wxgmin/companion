@@ -36,7 +36,7 @@ Write-Host "=" * 62
 Write-Host "  project : $Root"
 Write-Host "  models  : $ModelHome"
 
-$total = if ($SkipModels) { 4 } else { 6 }
+$total = if ($SkipModels) { 5 } else { 7 }
 $n = 0
 
 # ---------------------------------------------------------------- python
@@ -129,6 +129,36 @@ if (-not $SkipModels) {
     if ($LASTEXITCODE -ne 0) { Write-Err2 "torch is CPU-only - re-run this step"; exit 1 }
 }
 
+# ---------------------------------------------------------------- task agent
+$n++
+Write-Step $n $total "task agent (hermes)"
+$hermesExe = Get-Command hermes -ErrorAction SilentlyContinue
+if (-not $hermesExe) {
+    Write-Warn2 "hermes not on PATH - she can talk but cannot do tasks"
+    Write-Host "           install from https://github.com/NousResearch/hermes"
+} else {
+    Write-Ok "found: $($hermesExe.Source)"
+
+    # Install the command-code skill so Hermes can hand coding work to cmdc.
+    $hermesHome = if ($env:HERMES_HOME) { $env:HERMES_HOME } else { Join-Path $env:LOCALAPPDATA "hermes" }
+    $skillSrc = Join-Path $Root "integrations\hermes\command-code\SKILL.md"
+    $skillDst = Join-Path $hermesHome "skills\software-development\command-code"
+    if ((Test-Path $skillSrc) -and (Test-Path $hermesHome)) {
+        New-Item -ItemType Directory -Force -Path $skillDst | Out-Null
+        Copy-Item $skillSrc (Join-Path $skillDst "SKILL.md") -Force
+        Write-Ok "installed command-code skill"
+    } else {
+        Write-Warn2 "could not install the skill - Hermes home not found at $hermesHome"
+    }
+
+    if (Get-Command cmdc -ErrorAction SilentlyContinue) {
+        Write-Ok "cmdc found - Hermes can delegate coding work"
+    } else {
+        Write-Warn2 "cmdc not on PATH - coding delegation from Hermes will not work"
+        Write-Host "           npm install -g command-code"
+    }
+}
+
 # ---------------------------------------------------------------- voice
 Write-Host ""
 Write-Host "=" * 62
@@ -142,9 +172,9 @@ Write-Host "       data\voice\reference.wav"
 Write-Host "     (a plain voice note is fine; music and other speakers are not)"
 Write-Host ""
 Write-Host "  2. Put exported chats under data\persona\ and build the timeline:"
-Write-Host "       powershell -File scripts\build_persona.ps1"
+Write-Host "       powershell -File scripts\build_persona.ps1 -PersonaNames `"her name`""
 Write-Host ""
-Write-Host "  3. Start everything:"
-Write-Host "       companion.cmd"
-Write-Host "       companion.cmd --voice      # with the microphone loop"
+Write-Host "  3. Check the stack, then start everything:"
+Write-Host "       orchestrator\.venv\Scripts\python.exe orchestrator\verify_stack.py"
+Write-Host "       companion.cmd --voice"
 Write-Host ""

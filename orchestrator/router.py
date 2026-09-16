@@ -13,6 +13,7 @@ reply stays conversational.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -26,7 +27,7 @@ SESSION_DIR = config.PROJECT / "data" / "sessions"
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
 HERMES = "hermes"
-TASK_TIMEOUT_S = float(__import__("os").getenv("COMPANION_TASK_TIMEOUT", "600"))
+TASK_TIMEOUT_S = float(os.getenv("COMPANION_TASK_TIMEOUT", "600"))
 
 DELEGATE_TOOL: dict[str, Any] = {
     "type": "function",
@@ -81,16 +82,26 @@ def run_hermes(task: str, timeout: float = TASK_TIMEOUT_S) -> tuple[str, bool]:
         "give the concrete evidence (file path, command output). If it failed, "
         "say exactly what failed."
     )
+    # Hermes resolves its shell cwd from terminal.cwd, which defaults to '.'
+    # and lands in the home directory - NOT the directory this process was
+    # launched from. Without TERMINAL_CWD a delegated task silently writes its
+    # output into the wrong folder and still reports success. The flag --in
+    # only scopes session lookup, it does not move the shell.
+    env = {**os.environ, "TERMINAL_CWD": str(config.PROJECT)}
+    env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+
     t0 = time.perf_counter()
     try:
         proc = subprocess.run(
-            [HERMES, "-z", framed, "--cli"],
+            [HERMES, "-z", framed, "--cli", "--no-restore-cwd"],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
             cwd=str(config.PROJECT),
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return f"The task ran past {timeout:.0f}s and was stopped.", False

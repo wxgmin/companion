@@ -96,9 +96,9 @@ clause-sized chunks and played as it is produced. The first words land around
 
 She is not hard-coded to react to words like "open" or "search". She is given a
 single `delegate_task` tool and decides for herself when something needs real
-work. Conversation stays conversation; work is routed to the Hermes agent, which
-runs the tools. Its report comes back to her, and she tells you about it the way
-a person would.
+work. Conversation stays conversation; work is routed to the **Hermes** agent,
+which runs the tools. Its report comes back to her, and she tells you about it
+the way a person would.
 
 ```
 you:  make a file on my desktop called note.txt that says hello
@@ -108,6 +108,30 @@ her:  done. it's sitting on your desktop right now, exactly as i told it.
 
 This split is why a 27B stays conversational: the model handles the talking and
 only reaches for the agent when there is actually something to do.
+
+### Where coding work goes
+
+Hermes is linked to **Command Code** (`cmdc`) through a skill installed into
+Hermes' skills directory:
+
+```
+you -> her -> Hermes agent -> cmdc -> code changes on disk
+```
+
+Hermes decides when a job is big enough to hand to a coding agent rather than
+doing it inline, and `integrations/hermes/command-code/SKILL.md` documents the
+invocation it uses. Two details in there matter more than they look:
+
+- **Print mode withholds the file and shell tools.** A `cmdc -p ...` run
+  without `--yolo` (or `--tools-all`) exits `0` after explaining that it had no
+  tools, which reads exactly like a successful no-op.
+- **Hermes' shell ignores the process working directory.** It resolves
+  `terminal.cwd` from its own config, so a delegated task writes into the home
+  directory unless `TERMINAL_CWD` is set. The orchestrator sets it per
+  invocation; `--in` does not do this, it only scopes session lookup.
+
+Both failure modes are silent - the command succeeds and the work does not
+happen - so `orchestrator/test_chain.py` checks ground truth on disk.
 
 ---
 
@@ -259,8 +283,15 @@ companion/
     voice_loop.py            mic -> VAD -> STT -> reply -> speech
     router.py                chat vs. work, drives Hermes
     server.py                HTTP + WebSocket
+    verify_stack.py          acceptance check for the running stack
+    test_chain.py            orchestrator -> Hermes -> cmdc, checks files on disk
+    test_voice_loop.py       deterministic turn-taking test
+    measure_stack.py         staged VRAM accounting
+  integrations/hermes/
+    command-code/SKILL.md    teaches Hermes to delegate to cmdc
   scripts/
     setup.ps1                fresh-machine install
+    build_persona.ps1        chat exports -> training data
     check_ref_audio.py       validates the voice reference
     verify_role_inversion.py proves the training direction
   data/
