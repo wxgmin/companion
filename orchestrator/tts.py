@@ -100,6 +100,18 @@ _CLAUSE_END = re.compile(r"(?<=[,;:])\s+|\s+(?=(?:and|but|so|because|then)\s)")
 MAX_CHUNK_CHARS = 110
 MIN_CHUNK_CHARS = 24
 
+# Measured on this machine, Chatterbox at exaggeration 0.8:
+#     2 words -> 3.01s     7 words -> 3.78s     21 words -> 5.64s
+# Marginal cost is only ~0.14s/word, so there is a roughly 2.7s fixed cost per
+# request. That makes chunk COUNT the thing to minimise, not chunk size: three
+# 7-word sentences cost 11.3s, while one 21-word sentence costs 5.6s.
+#
+# The first chunk is deliberately kept short: it decides when she starts
+# talking, and a listener notices a late start far more than a late finish. It
+# grows only enough to avoid emitting a two-word stub, then closes.
+FIRST_CHUNK_CHARS = 48
+TAIL_CHUNK_CHARS = 260
+
 
 def _split_long(part: str, max_chars: int) -> list[str]:
     """Break an over-long sentence at commas/conjunctions, then by words."""
@@ -124,9 +136,7 @@ def _split_long(part: str, max_chars: int) -> list[str]:
     return out
 
 
-def sentences(
-    text: str, min_chars: int = MIN_CHUNK_CHARS, max_chars: int = MAX_CHUNK_CHARS
-) -> list[str]:
+def sentences(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]:
     """Break a reply into chunks that stay ahead of real-time playback."""
     parts: list[str] = []
     for sentence in _SENTENCE_END.split(text or ""):
@@ -136,12 +146,15 @@ def sentences(
 
     chunks: list[str] = []
     for part in parts:
-        # Merge a stub into the previous chunk only if that stays within budget.
-        if (
-            chunks
-            and len(part) < min_chars
-            and len(chunks[-1]) + 1 + len(part) <= max_chars
-        ):
+        if not chunks:
+            limit = FIRST_CHUNK_CHARS
+        elif len(chunks) == 1:
+            # The opener is closed; only let it take one more piece if it is
+            # still too short to sound like a sentence.
+            limit = FIRST_CHUNK_CHARS if len(chunks[0]) < MIN_CHUNK_CHARS else 0
+        else:
+            limit = TAIL_CHUNK_CHARS
+        if chunks and limit and len(chunks[-1]) + 1 + len(part) <= limit:
             chunks[-1] = f"{chunks[-1]} {part}"
         else:
             chunks.append(part)

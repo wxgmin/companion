@@ -63,10 +63,14 @@ PERSONA_MODEL = os.getenv(
     "COMPANION_MODEL", "orcarouter/Qwen3.8-27B-Uncensored:iq4_xs"
 )
 
-# 64K is the largest context that still measured 100% GPU alongside Chatterbox.
-# Do NOT raise this without re-measuring: overshooting VRAM causes silent CPU
-# spill, which degrades tool-call reliability rather than erroring loudly.
-PERSONA_NUM_CTX = int(os.getenv("COMPANION_NUM_CTX", "65536"))
+# Measured, not assumed. This model is a hybrid - 64 recurrent layers against
+# 16 attention layers (llama_memory_recurrent vs llama_kv_cache) - and recurrent
+# layers are sequential, so generation is slow by architecture:
+#     ~4.1 tok/s with Chatterbox+Whisper resident (615 MiB free)
+#     ~9.3 tok/s with the card mostly free
+# Ollama also caps what it will actually load: requesting 65536 still came up as
+# 16384 (confirmed with `ollama ps`), so a larger number here buys nothing.
+PERSONA_NUM_CTX = int(os.getenv("COMPANION_NUM_CTX", "32768"))
 
 # Thinking mode roughly triples time-to-first-token and buffers the whole
 # reasoning trace before any content, so it is off for conversation.
@@ -77,7 +81,12 @@ PERSONA_THINK = os.getenv("COMPANION_THINK", "0") == "1"
 KEEP_ALIVE = os.getenv("COMPANION_KEEP_ALIVE", "10m")
 
 TEMPERATURE = float(os.getenv("COMPANION_TEMPERATURE", "0.85"))
-MAX_TOKENS = int(os.getenv("COMPANION_MAX_TOKENS", "350"))
+
+# Deliberately matched to the persona instruction ("under about 60 words") rather
+# than left generous. At the measured 9.3 tok/s a 350-token cap is a 39-second
+# reply, which is the difference between talking to someone and waiting on a
+# batch job. 110 tokens covers ~80 words and bounds the worst case near 12s.
+MAX_TOKENS = int(os.getenv("COMPANION_MAX_TOKENS", "110"))
 
 # --------------------------------------------------------------------- stt
 WHISPER_DIR = MODEL_STORE / "ASR - Speech to Text" / "faster-whisper-large-v3-turbo"
