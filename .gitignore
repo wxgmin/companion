@@ -57,6 +57,8 @@ build/
 dist/
 .cache/
 *.log
+*.err
+*.out
 logs/
 .pytest_cache/
 .ruff_cache/
