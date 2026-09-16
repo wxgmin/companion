@@ -93,7 +93,12 @@ const PROVIDERS = {
   'ollama': {
     id: 'ollama',
     definitionId: 'ollama',
-    config: { baseUrl: 'http://127.0.0.1:11434' },
+    // The /v1/ is required, not cosmetic. This provider is OpenAI-shaped and
+    // builds `${baseUrl}/chat/completions`, so omitting it produces a request
+    // to :11434/chat/completions and Ollama answers with its bare
+    // "404 page not found" - which reads like a missing route rather than a
+    // wrong base path. The provider's own default is 'http://localhost:11434/v1/'.
+    config: { baseUrl: 'http://127.0.0.1:11434/v1/' },
     status: 'configured',
     configuredBy: 'user',
   },

@@ -30,6 +30,9 @@ Usage:
 import argparse
 import io
 import os
+import shutil
+import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -41,6 +44,11 @@ import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
+
+# Resolved once at import. Browsers upload webm/opus, which libsndfile cannot
+# read inside a webm container, so ffmpeg is the only decoder that reliably
+# handles what the microphone actually produces.
+_FFMPEG = shutil.which("ffmpeg")
 
 # ---------------------------------------------------------------------------
 # request/response models (OpenAI speech API shape)
@@ -161,6 +169,68 @@ class Engine:
         return buf.getvalue()
 
 
+def _decode_to_16k(raw: bytes, filename: str | None) -> np.ndarray:
+    """Decode any uploaded audio to 16 kHz mono float32.
+
+    faster-whisper assumes 16 kHz when it is handed a bare array - it takes no
+    sample-rate argument - so resampling here is not optional. Feeding it 24 or
+    48 kHz audio does not raise: the model hears sped-up speech and returns
+    confident nonsense, which is far harder to spot than an outright error.
+
+    ffmpeg is preferred because it handles every container a browser might
+    produce and resamples in the same pass. soundfile and librosa remain as
+    fallbacks for the plain-WAV case where ffmpeg is unavailable.
+    """
+    suffix = Path(filename or "clip.webm").suffix or ".webm"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(raw)
+        tmp_path = tmp.name
+
+    try:
+        if _FFMPEG:
+            # -ar 16000 -ac 1 emits exactly what whisper wants, so no second
+            # resampling step is needed or wanted.
+            proc = subprocess.run(
+                [
+                    _FFMPEG, "-nostdin", "-loglevel", "error",
+                    "-i", tmp_path,
+                    "-f", "f32le", "-ac", "1", "-ar", "16000",
+                    "-",
+                ],
+                capture_output=True,
+            )
+            if proc.returncode == 0 and proc.stdout:
+                audio = np.frombuffer(proc.stdout, dtype=np.float32)
+                if audio.size:
+                    print(
+                        f"  transcript: {audio.size / 16000:.1f}s via ffmpeg "
+                        f"({suffix}, {len(raw) // 1024} KB)",
+                        flush=True,
+                    )
+                    return audio
+            print(f"  ffmpeg failed rc={proc.returncode}; falling back", flush=True)
+
+        data, sr = sf.read(tmp_path, dtype="float32")
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        if sr != 16000:
+            import librosa
+
+            data = librosa.resample(
+                np.asarray(data, dtype="float32"), orig_sr=sr, target_sr=16000
+            )
+        print(
+            f"  transcript: {len(data) / 16000:.1f}s via soundfile ({sr}Hz src)",
+            flush=True,
+        )
+        return np.asarray(data, dtype="float32")
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
 def build_app(args) -> FastAPI:
     from contextlib import asynccontextmanager
 
@@ -171,6 +241,7 @@ def build_app(args) -> FastAPI:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"device: {device}")
         print(f"reference: {args.ref}")
+        print(f"ffmpeg: {_FFMPEG or 'NOT FOUND (webm/opus uploads will fail)'}")
         _engine = Engine(Path(args.ref), args.exaggeration, args.cfg_weight, device)
         yield
 
@@ -219,39 +290,16 @@ def build_app(args) -> FastAPI:
         if not raw:
             raise HTTPException(status_code=400, detail="empty audio")
 
-        # faster-whisper wants a path or array, not a file object.
-        if file.filename and Path(file.filename).suffix.lower() == ".wav":
-            try:
-                data, sr = sf.read(io.BytesIO(raw), dtype="float32")
-            except Exception as exc:  # noqa: BLE001
-                raise HTTPException(status_code=400, detail=f"bad wav: {exc}")
-        else:
-            # Browsers send webm/opus; soundfile cannot read it, so go via a
-            # temp file and let ffmpeg-backed decoding handle it.
-            import tempfile
+        data = _decode_to_16k(raw, file.filename)
+        if data.size == 0:
+            raise HTTPException(status_code=400, detail="decoded to zero samples")
 
-            suffix = Path(file.filename or "clip.webm").suffix or ".webm"
-            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                tmp.write(raw)
-                tmp_path = tmp.name
-            try:
-                data, sr = sf.read(tmp_path, dtype="float32")
-            except Exception:
-                import librosa
-
-                data, sr = librosa.load(tmp_path, sr=16000, mono=True)
-            finally:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-
-        if data.ndim > 1:
-            data = data.mean(axis=1)
-
+        # vad_filter drops non-speech. Without it whisper invents fluent text
+        # from silence and background noise, which reads as "worked" while
+        # returning something the user never said.
         try:
             segments, _info = asr.transcribe(
-                np.asarray(data, dtype="float32"),
+                data,
                 language=language or None,
                 beam_size=1,
                 vad_filter=True,
@@ -259,6 +307,17 @@ def build_app(args) -> FastAPI:
             text = " ".join(s.text.strip() for s in segments).strip()
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=f"transcription failed: {exc}")
+
+        # An empty string here is the most likely cause of AIRI's "failed to
+        # transcribe" error: the HTTP call still returns 200, so the failure is
+        # invisible from the transport side and only shows up as blank text.
+        # Logging the exact value makes that distinguishable from a bad upload.
+        print(
+            f"  -> text={text!r} "
+            f"(file={file.filename!r} bytes={len(raw)} "
+            f"rms={float(np.sqrt(np.mean(data ** 2))):.5f})",
+            flush=True,
+        )
 
         if response_format == "text":
             return Response(content=text, media_type="text/plain")
