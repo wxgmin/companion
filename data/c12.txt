@@ -1,0 +1,38 @@
+Fix voice input: the provider ids were wrong, so hearing was never bound
+
+"Voice input failed to transcribe speech" had nothing to do with the voice
+server. AIRI had never sent it a single request - the only entry in the log was
+my own health check.
+
+The cause was the configured provider names. AIRI's provider *directory* is not
+the provider id: providers/openai-audio/ exports openai-audio-speech and
+openai-audio-transcription as separate definitions, each with its own task list.
+I had configured both directions as `openai-audio`, which is not an id at all.
+AIRI discarded the unknown name, left hearing unbound, and reported a
+transcription failure that pointed at the wrong layer entirely.
+
+Corrected to openai-audio-speech and openai-audio-transcription. There are now
+two provider entries with a shared baseUrl rather than one, and both are listed
+in providers/added.
+
+The earlier task matrix that led me astray came from a grep which matched a .vue
+filename rather than a provider declaration. real-providers now walks each file
+tracking the most recent id: and pairing it with the next tasks: array, which
+gets all 63 provider instances instead of the handful the regex found.
+
+Two other bugs surfaced while verifying:
+
+  * The settings backup used fs.cpSync, which fails on this directory with EPIPE.
+    It was really the LOCK file - held by whoever owns the store - so the copy
+    now goes file by file and skips LOCK, which is a zero-byte marker LevelDB
+    recreates on open and which carries no data to preserve.
+
+  * The transcription endpoint was only ever tested with WAV. AIRI records from
+    the microphone, so it uploads webm/opus. Verified that path end to end
+    against a real opus file before trusting it; it returns 200 with a correct
+    transcript.
+
+Verified after the change: AIRI reaches the server and gets 200 OK on
+/v1/audio/transcriptions, with no errors.
+
+Co-authored-by: CommandCodeBot <noreply@commandcode.ai>

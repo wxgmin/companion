@@ -41,19 +41,28 @@ const LEVELDB = path.join(USERDATA, 'Local Storage', 'leveldb')
 
 // The settings that actually decide whether she talks and where.
 //
-// speech/hearing use `openai-audio`, NOT `openai-compatible`: the latter
-// declares tasks:['chat'] and can never be selected for voice, despite the name
-// suggesting otherwise. `openai-audio` builds both a speech and a transcription
-// client from one baseUrl, which is why our server exposes both routes.
+// Speech and hearing are SEPARATE provider definitions, and the directory name
+// is not the provider id. `providers/openai-audio/` exports
+// openai-audio-speech and openai-audio-transcription as distinct providers with
+// distinct task lists. Configuring a name that does not exist (for example
+// `openai-audio`) fails silently - AIRI just leaves the setting unbound and
+// reports "voice input failed to transcribe speech" with no further detail.
+//
+// Do not use `openai-compatible` for either: it declares tasks:['chat'] and can
+// never be selected for audio, despite the name suggesting otherwise.
+//
+// Her actual voice is not selectable here. The voice server has one reference
+// clip baked in at startup and ignores the requested voice/model, so these
+// values only need to be ones AIRI will accept and send.
 //
 // stage/model is a built-in preset id. preset-vrm-1 is AvatarSample_A, the
 // bundled VRM avatar - chosen over the default preset-live2d-1 because it is a
 // 3D model with the blend shapes that lip-sync drives.
 const SETTINGS = {
-  'settings/speech/active-provider': 'openai-audio',
-  'settings/speech/active-model': 'chatterbox',
-  'settings/speech/voice': 'her',
-  'settings/hearing/active-provider': 'openai-audio',
+  'settings/speech/active-provider': 'openai-audio-speech',
+  'settings/speech/active-model': 'tts-1',
+  'settings/speech/voice': 'alloy',
+  'settings/hearing/active-provider': 'openai-audio-transcription',
   'settings/hearing/active-model': 'whisper-1',
   'settings/consciousness/active-provider': 'ollama',
   'settings/consciousness/active-model': LLM_MODEL,
@@ -67,9 +76,16 @@ const SETTINGS = {
 // `configured` holds the real instance, whose shape is InferenceServiceProvider
 // from @proj-airi/stage-ui/src/libs/providers/types.ts.
 const PROVIDERS = {
-  'openai-audio': {
-    id: 'openai-audio',
-    definitionId: 'openai-audio',
+  'openai-audio-speech': {
+    id: 'openai-audio-speech',
+    definitionId: 'openai-audio-speech',
+    config: { apiKey: 'local', baseUrl: VOICE_URL },
+    status: 'configured',
+    configuredBy: 'user',
+  },
+  'openai-audio-transcription': {
+    id: 'openai-audio-transcription',
+    definitionId: 'openai-audio-transcription',
     config: { apiKey: 'local', baseUrl: VOICE_URL },
     status: 'configured',
     configuredBy: 'user',
@@ -82,12 +98,43 @@ const PROVIDERS = {
     configuredBy: 'user',
   },
 }
-const ADDED = { 'openai-audio': true, 'ollama': true }
+const ADDED = {
+  'openai-audio-speech': true,
+  'openai-audio-transcription': true,
+  'ollama': true,
+}
 
 function backupDir() {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const src = path.join(USERDATA, 'Local Storage')
   const dest = path.join(USERDATA, `Local Storage.bak-${stamp}`)
-  fs.cpSync(path.join(USERDATA, 'Local Storage'), dest, { recursive: true })
+
+  // Copies file by file rather than with fs.cpSync, and skips LOCK.
+  //
+  // LOCK is held by whoever owns the store, which is why cpSync failed with
+  // EPIPE and copyFileSync with EBUSY on this one entry. It also holds no data:
+  // it is a zero-byte marker LevelDB recreates on open, so copying it would be
+  // wrong even if it were readable.
+  fs.mkdirSync(path.join(dest, 'leveldb'), { recursive: true })
+  for (const name of fs.readdirSync(path.join(src, 'leveldb'))) {
+    if (name === 'LOCK') continue
+    const from = path.join(src, 'leveldb', name)
+    if (!fs.statSync(from).isFile()) continue
+
+    let lastErr
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      try {
+        fs.copyFileSync(from, path.join(dest, 'leveldb', name))
+        lastErr = null
+        break
+      } catch (err) {
+        lastErr = err
+        // Windows can still hold a just-closed process's handles briefly.
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400 * attempt)
+      }
+    }
+    if (lastErr) throw lastErr
+  }
   return dest
 }
 
@@ -182,10 +229,13 @@ async function main() {
     console.log(`wrote ${changed} setting(s)`)
     console.log()
     console.log('AIRI will now use:')
-    console.log(`  speech        chatterbox via ${VOICE_URL}`)
-    console.log(`  hearing       whisper via ${VOICE_URL}`)
+    console.log(`  speech        openai-audio-speech        -> ${VOICE_URL}`)
+    console.log(`  hearing       openai-audio-transcription -> ${VOICE_URL}`)
     console.log(`  consciousness ${LLM_MODEL} via ollama`)
     console.log('  stage         preset-vrm-1 (AvatarSample_A, 3D + lip-sync)')
+    console.log()
+    console.log('Her voice is baked into the server, so AIRI\'s voice/model')
+    console.log('selection is ignored on purpose.')
   }
   return 0
 }
